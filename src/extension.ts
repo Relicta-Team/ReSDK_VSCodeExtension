@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 async function init(context: vscode.ExtensionContext) {
 
-	//await lserv.initialize(context);
+	await lserv.initialize(context);
 
 	extensionName = context.extension.packageJSON.displayName;
 	

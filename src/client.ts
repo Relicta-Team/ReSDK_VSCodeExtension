@@ -33,11 +33,16 @@ export async function initialize(context: ExtensionContext) {
 
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
-		// Register the server for plain text documents
-		documentSelector: ['sqf', 'plaintext', 'txt'],
+		// Register the server for ReSDK source files
+		documentSelector: [
+			{ scheme: 'file', language: 'sqf' },
+			{ scheme: 'file', pattern: '**/*.sqf' },
+			{ scheme: 'file', pattern: '**/*.hpp' },
+			{ scheme: 'file', pattern: '**/*.interface' }
+		],
 		synchronize: {
-			// Notify the server about file changes to '.clientrc files contained in the workspace
-			fileEvents: workspace.createFileSystemWatcher('**/.clientrc')
+			// Notify the server about file changes to source files
+			fileEvents: workspace.createFileSystemWatcher('**/*.{sqf,hpp,interface}')
 		}
 	};
 

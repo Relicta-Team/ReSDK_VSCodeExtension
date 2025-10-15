@@ -1,362 +1,818 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- * ------------------------------------------------------------------------------------------ */
+// ======================================================
+// ReSDK Language Server
+// ======================================================
 
 import {
 	createConnection,
 	TextDocuments,
-	Diagnostic,
-	DiagnosticSeverity,
 	ProposedFeatures,
 	InitializeParams,
 	DidChangeConfigurationNotification,
-	CompletionItem,
-	CompletionItemKind,
-	TextDocumentPositionParams,
 	SymbolInformation,
 	SymbolKind,
 	DocumentSymbolParams,
+	DocumentSymbol,
 	Range,
-	TextDocumentSyncKind
+	TextDocumentSyncKind,
+	DefinitionParams,
+	Location,
+	ReferenceParams,
+	Hover,
+	MarkupKind,
+	TextDocumentPositionParams,
+	CodeLens,
+	CodeLensParams
 } from 'vscode-languageserver/node';
-import { METHODS } from 'http';
 
-import {
-	TextDocument
-} from 'vscode-languageserver-textdocument';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 
+import { WorkspaceManager } from './workspace/WorkspaceManager';
 
-
-// Create a connection for the server. The connection uses Node's IPC as a transport.
-// Also include all preview / proposed LSP features.
 let connection = createConnection(ProposedFeatures.all);
-
-// Create a simple text document manager. The text document manager
-// supports full document sync only
 let documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
-let hasConfigurationCapability: boolean = false;
-let hasWorkspaceFolderCapability: boolean = false;
-let hasDiagnosticRelatedInformationCapability: boolean = false;
+let workspaceManager: WorkspaceManager | null = null;
 
 connection.onInitialize((params: InitializeParams) => {
-	//console.log = connection.console.log.bind(connection.console);
-	//console.error = connection.console.error.bind(connection.console);
-	connection.console.log('Connection: ON INITIALIZE');
-	let capabilities = params.capabilities;
-
-	// Does the client support the `workspace/configuration` request?
-	// If not, we will fall back using global settings
-	hasConfigurationCapability = !!(
-		capabilities.workspace && !!capabilities.workspace.configuration
-	);
-	hasWorkspaceFolderCapability = !!(
-		capabilities.workspace && !!capabilities.workspace.workspaceFolders
-	);
-	hasDiagnosticRelatedInformationCapability = !!(
-		capabilities.textDocument &&
-		capabilities.textDocument.publishDiagnostics &&
-		capabilities.textDocument.publishDiagnostics.relatedInformation
-	);
-
 	return {
 		capabilities: {
-			textDocumentSync: TextDocumentSyncKind.Incremental, //documents.syncKind,
-			// Tell the client that the server supports code completion
-			/*
-			completionProvider: {
-				resolveProvider: true
-			},
-			*/
-			documentSymbolProvider : true
-		}
-	};
-});
-
-connection.onInitialized(() => {
-	connection.console.log('Connection: ON INITIALIZED');
-	if (hasConfigurationCapability) {
-		// Register for all configuration changes.
-		connection.client.register(DidChangeConfigurationNotification.type, undefined);
-	}
-	if (hasWorkspaceFolderCapability) {
-		connection.workspace.onDidChangeWorkspaceFolders(_event => {
-			connection.console.log('Workspace folder change event received.');
-		});
-	}
-});
-
-// The example settings
-interface ExampleSettings {
-	maxNumberOfProblems: number;
-}
-
-// The global settings, used when the `workspace/configuration` request is not supported by the client.
-// Please note that this is not the case when using this server with the client provided in this example
-// but could happen with other clients.
-const defaultSettings: ExampleSettings = { maxNumberOfProblems: 1000 };
-let globalSettings: ExampleSettings = defaultSettings;
-
-// Cache the settings of all open documents
-let documentSettings: Map<string, Thenable<ExampleSettings>> = new Map();
-
-connection.onDidChangeConfiguration(change => {
-	connection.console.log('Connection: ON DID CHANGE CONFIGURASION');
-	if (hasConfigurationCapability) {
-		// Reset all cached document settings
-		documentSettings.clear();
-	} else {
-		globalSettings = <ExampleSettings>(
-			(change.settings.ReSDKLangServer || defaultSettings)
-		);
-	}
-
-	// Revalidate all open text documents
-	//documents.all().forEach(validateTextDocument);
-});
-
-function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
-	if (!hasConfigurationCapability) {
-		return Promise.resolve(globalSettings);
-	}
-	let result = documentSettings.get(resource);
-	if (!result) {
-		result = connection.workspace.getConfiguration({
-			scopeUri: resource,
-			section: 'ReSDKLangServer'
-		});
-		documentSettings.set(resource, result);
-	}
-	return result;
-}
-
-// Only keep settings for open documents
-documents.onDidClose(e => {
-	documentSettings.delete(e.document.uri);
-});
-
-// The content of a text document has changed. This event is emitted
-// when the text document first opened or when its content has changed.
-documents.onDidChangeContent(change => {
-	connection.console.log('Documents: ON DID CHANGE CONTENT');
-	validateTextDocument(change.document);
-});
-
-async function validateTextDocument(textDocument: TextDocument): Promise<void> {
-	// In this simple example we get the settings for every validate run.
-	let settings = await getDocumentSettings(textDocument.uri);
-	
-	// The validator creates diagnostics for all uppercase words length 2 and more
-	let text = textDocument.getText();
-	let pattern = /\b[A-Z]{2,}\b/g;
-	let m: RegExpExecArray | null;
-
-	let problems = 0;
-	let diagnostics: Diagnostic[] = [];
-	while ((m = pattern.exec(text)) && problems < settings.maxNumberOfProblems) {
-		problems++;
-		let diagnostic: Diagnostic = {
-			severity: DiagnosticSeverity.Warning,
-			range: {
-				start: textDocument.positionAt(m.index),
-				end: textDocument.positionAt(m.index + m[0].length)
-			},
-			message: `${m[0]} is all uppercase.`,
-			source: 'ex'
-		};
-		if (hasDiagnosticRelatedInformationCapability) {
-			diagnostic.relatedInformation = [
-				{
-					location: {
-						uri: textDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Spelling matters'
-				},
-				{
-					location: {
-						uri: textDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Particularly for names'
-				}
-			];
-		}
-		diagnostics.push(diagnostic);
-	}
-
-	// Send the computed diagnostics to VSCode.
-	connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
-}
-
-connection.onDidChangeWatchedFiles(_change => {
-	// Monitored files have change in VSCode
-	connection.console.log('We received an file change event');
-});
-
-// This handler provides the initial list of the completion items.
-/*
-connection.onCompletion(
-	(_textDocumentPosition: TextDocumentPositionParams): CompletionItem[] => {
-		connection.console.log('CONNECTION: ON COMPLETION');
-		// The pass parameter contains the position of the text document in
-		// which code complete got requested. For the example we ignore this
-		// info and always provide the same completion items.
-		return [
-			{
-				label: 'TypeScript',
-				kind: CompletionItemKind.Text,
-				data: 1
-			},
-			{
-				label: 'JavaScript',
-				kind: CompletionItemKind.Text,
-				data: 2
+			textDocumentSync: TextDocumentSyncKind.Incremental,
+			documentSymbolProvider: true,
+			definitionProvider: true,
+			referencesProvider: true,
+			hoverProvider: true,
+			codeLensProvider: {
+				resolveProvider: false
 			}
-		];
-	}
-);
-*/
-
-// This handler resolves additional information for the item selected in
-// the completion list.
-/*
-connection.onCompletionResolve(
-	(item: CompletionItem): CompletionItem => {
-		connection.console.log('CONNECTION: ON COMPLETION RESOLVE');
-		if (item.data === 1) {
-			item.detail = 'TypeScript details';
-			item.documentation = 'TypeScript documentation';
-		} else if (item.data === 2) {
-			item.detail = 'JavaScript details';
-			item.documentation = 'JavaScript documentation';
 		}
-		return item;
-	}
-);
-*/
-
-// Gets called when VS Code asks us to provide document symbols
-connection.onDocumentSymbol(
-	(symbolParams : DocumentSymbolParams) => {
-
-		connection.console.log('Connection: ON DOCUMENT SYMBOL');
-
-		// Get document text from uri
-		let uri = symbolParams.textDocument.uri;
-		let doc = documents.get(uri);
-		if (doc == null) {return null;} // Bail if document is not found
-		let text = doc.getText();
-
-		// Find all patterns
-		let patternClass = /CLASS\("(\w+)".*,/g;
-		let patternMethod = /METHOD\((\w+)\)/g; // METHOD("abc") or STATIC_METHOD("abc")
-		let patternVariable = /VARIABLE.*\("(\w+)"/g; // VARIABLE("abc") or VARIABLE_ATTR("abc") or STATIC_VARIABLE("abc")
-		let retArray : SymbolInformation[] = [];
-	
-		pushSymbols(text, patternClass, SymbolKind.Class, retArray, doc, uri);
-		pushSymbols(text, patternMethod, SymbolKind.Function, retArray, doc, uri);
-		pushSymbols(text, patternVariable, SymbolKind.Variable, retArray, doc, uri);
-
-		return retArray;
-	}
-);
-
-// Searches for regexp patterns and pushes results into an array as symbols
-function pushSymbols(text : string, pattern : RegExp, kind : SymbolKind, arrayOut : SymbolInformation[], doc : TextDocument, uri : string) : void {
-	let m: RegExpExecArray | null;
-	while ((m = pattern.exec(text))) {
-		let _range = {
-			start: doc.positionAt(m.index),
-			end: doc.positionAt(m.index + m[0].length)
-		};
-
-		let _loc = {
-			uri: uri,
-			range: _range
-		};
-
-		let sym = {
-			name: m[1],
-			kind: kind,
-			location: _loc
-		};
-
-		arrayOut.push(sym);
 	};
+});
+
+connection.onInitialized(async () => {
+	const workspaceFolders = await connection.workspace.getWorkspaceFolders();
+	
+	if (workspaceFolders && workspaceFolders.length > 0) {
+		const roots = workspaceFolders.map(folder => {
+			let fsPath = folder.uri;
+			if (fsPath.startsWith('file://')) {
+				fsPath = decodeURIComponent(fsPath.substring(7));
+				if (process.platform === 'win32' && fsPath.startsWith('/')) {
+					fsPath = fsPath.substring(1);
+				}
+				fsPath = fsPath.replace(/\//g, require('path').sep);
+			}
+			return fsPath;
+		});
+
+		workspaceManager = new WorkspaceManager(roots);
+		
+		workspaceManager.scanWorkspace().then(() => {
+			connection.console.log('ReSDK Language Server ready');
+		});
+	}
+});
+
+// Helper to normalize URI
+function normalizeUri(uri: string): string {
+	return decodeURIComponent(uri).toLowerCase();
 }
 
-
-/*
-	// The validator creates diagnostics for all uppercase words length 2 and more
-	let text = textDocument.getText();
-	let pattern = /\b[A-Z]{2,}\b/g;
-	let m: RegExpExecArray | null;
-
-	let problems = 0;
-	let diagnostics: Diagnostic[] = [];
-	while ((m = pattern.exec(text)) && problems < settings.maxNumberOfProblems) {
-		problems++;
-		let diagnostic: Diagnostic = {
-			severity: DiagnosticSeverity.Warning,
-			range: {
-				start: textDocument.positionAt(m.index),
-				end: textDocument.positionAt(m.index + m[0].length)
-			},
-			message: `${m[0]} is all uppercase.`,
-			source: 'ex'
-		};
-		if (hasDiagnosticRelatedInformationCapability) {
-			diagnostic.relatedInformation = [
-				{
-					location: {
-						uri: textDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Spelling matters'
-				},
-				{
-					location: {
-						uri: textDocument.uri,
-						range: Object.assign({}, diagnostic.range)
-					},
-					message: 'Particularly for names'
-				}
-			];
-		}
-		diagnostics.push(diagnostic);
+// Document changes
+documents.onDidChangeContent(change => {
+	if (workspaceManager) {
+		workspaceManager.parseFile(change.document.uri, change.document.getText());
 	}
-*/
-
-//connection.onDocumentSymbol
-//connection.
-
-/*
-connection.onDidOpenTextDocument((params) => {
-	// A text document got opened in VSCode.
-	// params.uri uniquely identifies the document. For documents store on disk this is a file URI.
-	// params.text the initial full content of the document.
-	connection.console.log(`${params.textDocument.uri} opened.`);
 });
-connection.onDidChangeTextDocument((params) => {
-	// The content of a text document did change in VSCode.
-	// params.uri uniquely identifies the document.
-	// params.contentChanges describe the content changes to the document.
-	connection.console.log(`${params.textDocument.uri} changed: ${JSON.stringify(params.contentChanges)}`);
-});
-connection.onDidCloseTextDocument((params) => {
-	// A text document got closed in VSCode.
-	// params.uri uniquely identifies the document.
-	connection.console.log(`${params.textDocument.uri} closed.`);
-});
-*/
 
-// Make the text document manager listen on the connection
-// for open, change and close text document events
+// Document Symbols
+connection.onDocumentSymbol((params: DocumentSymbolParams): DocumentSymbol[] => {
+	const doc = documents.get(params.textDocument.uri);
+	if (!doc) return [];
+
+	const { parse } = require('./parser/sqfParser');
+	const { Variable, Keyword, Space, Tab, EndOfLine, Comment, ParserKeyword } = require('./parser/sqfTypes');
+	
+	const text = doc.getText();
+	const statement = parse(text);
+	const tokens = statement.content;
+	
+	const rootSymbols: DocumentSymbol[] = [];
+	
+	// Helper для пропуска whitespace
+	const skipWhitespace = (idx: number) => {
+		while (idx < tokens.length && 
+		       (tokens[idx] instanceof Space || 
+		        tokens[idx] instanceof Tab || 
+		        tokens[idx] instanceof EndOfLine ||
+		        tokens[idx] instanceof Comment)) {
+			idx++;
+		}
+		return idx;
+	};
+	
+	// Найти закрывающую скобку
+	const findClosingBrace = (startIdx: number) => {
+		let depth = 1;
+		for (let i = startIdx + 1; i < tokens.length; i++) {
+			if (tokens[i] instanceof ParserKeyword) {
+				if (tokens[i].value === '{') depth++;
+				if (tokens[i].value === '}') {
+					depth--;
+					if (depth === 0) return i;
+				}
+			}
+		}
+		return -1;
+	};
+	
+	// Найти закрывающую скобку для функции (учитывает только { } без вложенности)
+	const findFunctionClosingBrace = (startIdx: number) => {
+		for (let i = startIdx + 1; i < tokens.length; i++) {
+			if (tokens[i] instanceof ParserKeyword) {
+				if (tokens[i].value === '}') {
+					// Проверяем, есть ли точка с запятой после }
+					let nextIdx = skipWhitespace(i + 1);
+					if (nextIdx < tokens.length && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === ';') {
+						return nextIdx; // Возвращаем позицию ;
+					}
+					return i; // Возвращаем позицию }
+				}
+			}
+		}
+		return -1;
+	};
+	
+	// Найти endclass/endstruct
+	const findEndKeyword = (startIdx: number, endKeyword: string) => {
+		let depth = 1;
+		const startKeyword = endKeyword === 'endclass' ? 'class' : 'struct';
+		
+		for (let i = startIdx; i < tokens.length; i++) {
+			if (tokens[i] instanceof Keyword) {
+				const kw = tokens[i].value.toLowerCase();
+				if (kw === startKeyword) depth++;
+				if (kw === endKeyword) {
+					depth--;
+					if (depth === 0) return i;
+				}
+			}
+		}
+		return -1;
+	};
+	
+	// Создать Range для символа
+	const createRange = (startIdx: number, endIdx: number): Range => {
+		// Найти реальные позиции токенов в тексте
+		const startToken = tokens[startIdx].toString();
+		const endToken = tokens[endIdx].toString();
+		
+		// Вычисляем примерную позицию через суммирование
+		let approxStartOffset = 0;
+		for (let i = 0; i < startIdx; i++) {
+			approxStartOffset += tokens[i].toString().length;
+		}
+		
+		// Ищем точную позицию startToken в тексте, начиная с примерной позиции
+		let startOffset = text.indexOf(startToken, Math.max(0, approxStartOffset - 100));
+		if (startOffset === -1) {
+			startOffset = approxStartOffset;
+		}
+		
+		// Ищем точную позицию endToken в тексте, начиная после startToken
+		let endOffset = text.indexOf(endToken, startOffset);
+		if (endOffset === -1) {
+			// Fallback
+			endOffset = approxStartOffset;
+			for (let i = startIdx; i <= endIdx; i++) {
+				endOffset += tokens[i].toString().length;
+			}
+		} else {
+			endOffset += endToken.length;
+		}
+		
+		return {
+			start: doc.positionAt(startOffset),
+			end: doc.positionAt(endOffset)
+		};
+	};
+	
+	// Создать selection range только для имени
+	const createSelectionRange = (nameIdx: number, fullRange: Range): Range => {
+		const { SQFString, Variable } = require('./parser/sqfTypes');
+		const token = tokens[nameIdx];
+		
+		// Вычисляем позицию токена
+		let offset = 0;
+		for (let i = 0; i < nameIdx; i++) {
+			offset += tokens[i].toString().length;
+		}
+		
+		let selectionRange: Range;
+		
+		if (token instanceof SQFString) {
+			// Для строк: offset на открывающей кавычке, пропускаем её
+			selectionRange = {
+				start: doc.positionAt(offset + 1),
+				end: doc.positionAt(offset + 1 + token.value.length)
+			};
+	} else {
+			// Для переменных и других токенов
+			const name = token instanceof Variable ? token.name : token.toString();
+			selectionRange = {
+				start: doc.positionAt(offset),
+				end: doc.positionAt(offset + name.length)
+			};
+		}
+		
+		// Убеждаемся, что selectionRange находится внутри fullRange
+		const fullStart = doc.offsetAt(fullRange.start);
+		const fullEnd = doc.offsetAt(fullRange.end);
+		const selStart = doc.offsetAt(selectionRange.start);
+		const selEnd = doc.offsetAt(selectionRange.end);
+		
+		// Если selectionRange выходит за границы fullRange, используем fullRange
+		if (selStart < fullStart || selEnd > fullEnd) {
+			return fullRange;
+		}
+		
+		return selectionRange;
+	};
+
+	// Парсинг переменных в диапазоне (только private и params)
+	const parseVariablesInRange = (startIdx: number, endIdx: number): DocumentSymbol[] => {
+		const vars: DocumentSymbol[] = [];
+		const seen = new Set<string>();
+		const { SQFString } = require('./parser/sqfTypes');
+		
+		for (let i = startIdx; i < endIdx; i++) {
+			const token = tokens[i];
+			
+			if (!(token instanceof Keyword)) continue;
+			
+			const keyword = token.value.toLowerCase();
+			
+			// Pattern: private _var = ...
+			if (keyword === 'private') {
+				let nextIdx = skipWhitespace(i + 1);
+				
+				// private ["_var1", "_var2"]
+				if (nextIdx < endIdx && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '[') {
+					let innerIdx = skipWhitespace(nextIdx + 1);
+					
+					while (innerIdx < endIdx) {
+						if (tokens[innerIdx] instanceof ParserKeyword && tokens[innerIdx].value === ']') {
+							break;
+						}
+						
+						if (tokens[innerIdx] instanceof SQFString) {
+							const varName = tokens[innerIdx].value;
+							if (varName.startsWith('_') && !seen.has(varName)) {
+								seen.add(varName);
+								const fullRange = createRange(innerIdx, innerIdx);
+								const selectionRange = createSelectionRange(innerIdx, fullRange);
+								vars.push(DocumentSymbol.create(
+									varName,
+									undefined,
+									SymbolKind.Variable,
+									selectionRange,
+									selectionRange
+								));
+							}
+						}
+						
+						innerIdx = skipWhitespace(innerIdx + 1);
+					}
+				}
+				// private _var = ...
+				else if (nextIdx < endIdx && tokens[nextIdx] instanceof Variable) {
+					const varName = tokens[nextIdx].name;
+					if (!seen.has(varName)) {
+						seen.add(varName);
+						const fullRange = createRange(nextIdx, nextIdx);
+						const selectionRange = createSelectionRange(nextIdx, fullRange);
+						vars.push(DocumentSymbol.create(
+							varName,
+							undefined,
+							SymbolKind.Variable,
+							selectionRange,
+							selectionRange
+						));
+					}
+				}
+			}
+			// Pattern: params ["_var1", "_var2"]
+			else if (keyword === 'params') {
+				let nextIdx = skipWhitespace(i + 1);
+				
+				if (nextIdx < endIdx && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '[') {
+					let innerIdx = skipWhitespace(nextIdx + 1);
+					
+					while (innerIdx < endIdx) {
+						if (tokens[innerIdx] instanceof ParserKeyword && tokens[innerIdx].value === ']') {
+							break;
+						}
+						
+						if (tokens[innerIdx] instanceof SQFString) {
+							const varName = tokens[innerIdx].value;
+							if (varName.startsWith('_') && !seen.has(varName)) {
+								seen.add(varName);
+								const fullRange = createRange(innerIdx, innerIdx);
+								const selectionRange = createSelectionRange(innerIdx, fullRange);
+								vars.push(DocumentSymbol.create(
+									varName,
+									undefined,
+									SymbolKind.Variable,
+									selectionRange,
+									selectionRange
+								));
+							}
+						}
+						
+						innerIdx = skipWhitespace(innerIdx + 1);
+					}
+				}
+			}
+		}
+		
+		return vars;
+	};
+	
+	// Парсинг полей и методов класса
+	const parseClassMembers = (startIdx: number, endIdx: number): DocumentSymbol[] => {
+		const members: DocumentSymbol[] = [];
+		const seenFields = new Set<string>();
+		const seenMethods = new Set<string>();
+		
+		for (let i = startIdx; i < endIdx; i++) {
+			const token = tokens[i];
+			
+			if (!(token instanceof Keyword)) continue;
+			
+			const keyword = token.value.toLowerCase();
+			
+			// var(name, value) и var_*(name)
+			if (keyword.startsWith('var')) {
+				let nextIdx = skipWhitespace(i + 1);
+				if (nextIdx < endIdx && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '(') {
+					let nameIdx = skipWhitespace(nextIdx + 1);
+					
+					if (nameIdx < endIdx && tokens[nameIdx] instanceof Variable) {
+						const fieldName = tokens[nameIdx].name;
+						
+						if (!seenFields.has(fieldName)) {
+							seenFields.add(fieldName);
+							
+							// Найти закрывающую скобку для полного range
+							let closeIdx = nameIdx + 1;
+							let parenDepth = 1;
+							while (closeIdx < endIdx && parenDepth > 0) {
+								if (tokens[closeIdx] instanceof ParserKeyword) {
+									if (tokens[closeIdx].value === '(') parenDepth++;
+									if (tokens[closeIdx].value === ')') parenDepth--;
+								}
+								closeIdx++;
+							}
+							
+							const fullRange = createRange(i, closeIdx - 1);
+							const selectionRange = createSelectionRange(nameIdx, fullRange);
+							
+							members.push(DocumentSymbol.create(
+								fieldName,
+								undefined,
+								SymbolKind.Field,
+								fullRange,
+								selectionRange
+							));
+						}
+					}
+				}
+			}
+			// func(name) { ... }
+			else if (keyword === 'func' || keyword === 'func_runtime') {
+				let nextIdx = skipWhitespace(i + 1);
+				if (nextIdx < endIdx && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '(') {
+					let nameIdx = skipWhitespace(nextIdx + 1);
+					
+					if (nameIdx < endIdx && tokens[nameIdx] instanceof Variable) {
+						const methodName = tokens[nameIdx].name;
+						
+						if (!seenMethods.has(methodName)) {
+							seenMethods.add(methodName);
+							
+							// Найти тело функции { ... }
+							let closeParenIdx = skipWhitespace(nameIdx + 1);
+							if (closeParenIdx < endIdx && tokens[closeParenIdx] instanceof ParserKeyword && tokens[closeParenIdx].value === ')') {
+								let bodyIdx = skipWhitespace(closeParenIdx + 1);
+								
+								if (bodyIdx < endIdx && tokens[bodyIdx] instanceof ParserKeyword && tokens[bodyIdx].value === '{') {
+									const bodyEndIdx = findFunctionClosingBrace(bodyIdx);
+									
+									if (bodyEndIdx !== -1 && bodyEndIdx < endIdx) {
+										// range должен начинаться с func, а не с {
+										const range = createRange(i, bodyEndIdx);
+										const selectionRange = createSelectionRange(nameIdx, range);
+										
+										// Парсим переменные внутри метода
+										const methodVars = parseVariablesInRange(bodyIdx + 1, bodyEndIdx);
+										
+										members.push(DocumentSymbol.create(
+											methodName,
+											undefined,
+											SymbolKind.Method,
+											range,
+											selectionRange,
+											methodVars
+										));
+										
+										i = bodyEndIdx;
+									} else {
+										// Нет тела, но есть полная декларация func(name)
+										const fullRange = createRange(i, closeParenIdx);
+										const selectionRange = createSelectionRange(nameIdx, fullRange);
+										
+										members.push(DocumentSymbol.create(
+											methodName,
+											undefined,
+											SymbolKind.Method,
+											fullRange,
+											selectionRange
+										));
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			// getter_func(name, do) и getterconst_func(name, do)
+			else if (keyword === 'getter_func' || keyword === 'getterconst_func') {
+				let nextIdx = skipWhitespace(i + 1);
+				if (nextIdx < endIdx && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '(') {
+					let nameIdx = skipWhitespace(nextIdx + 1);
+					
+					if (nameIdx < endIdx && tokens[nameIdx] instanceof Variable) {
+						const methodName = tokens[nameIdx].name;
+						
+						if (!seenMethods.has(methodName)) {
+							seenMethods.add(methodName);
+							
+							// Найти закрывающую скобку для полного range
+							let closeIdx = nameIdx + 1;
+							let parenDepth = 1;
+							while (closeIdx < endIdx && parenDepth > 0) {
+								if (tokens[closeIdx] instanceof ParserKeyword) {
+									if (tokens[closeIdx].value === '(') parenDepth++;
+									if (tokens[closeIdx].value === ')') parenDepth--;
+								}
+								closeIdx++;
+							}
+							
+							// Найти точку с запятой после )
+							let semicolonIdx = closeIdx;
+							while (semicolonIdx < endIdx && !(tokens[semicolonIdx] instanceof ParserKeyword && tokens[semicolonIdx].value === ';')) {
+								semicolonIdx++;
+							}
+							
+							// Отладка
+							console.log(`\ngetter_func ${methodName}:`);
+							console.log(`  i: ${i} -> ${tokens[i].toString()}`);
+							console.log(`  semicolonIdx: ${semicolonIdx} -> ${tokens[semicolonIdx].toString()}`);
+							console.log(`  Tokens between:`);
+							for (let j = i; j <= semicolonIdx; j++) {
+								console.log(`    [${j}] ${tokens[j].constructor.name}: "${tokens[j].toString()}"`);
+							}
+							
+							const fullRange = createRange(i, semicolonIdx);
+							const selectionRange = createSelectionRange(nameIdx, fullRange);
+							
+							console.log(`  fullRange: ${JSON.stringify(fullRange)}`);
+							console.log(`  Text at range: "${text.substring(doc.offsetAt(fullRange.start), doc.offsetAt(fullRange.end))}"`);
+
+							
+							members.push(DocumentSymbol.create(
+								methodName,
+								undefined,
+								SymbolKind.Method,
+								fullRange,
+								selectionRange
+							));
+						}
+					}
+				}
+			}
+			// def(name) для структур
+			else if (keyword === 'def' || keyword === 'def_ret' || keyword === 'def_null') {
+				let nextIdx = skipWhitespace(i + 1);
+				if (nextIdx < endIdx && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '(') {
+					let nameIdx = skipWhitespace(nextIdx + 1);
+					
+					if (nameIdx < endIdx && tokens[nameIdx] instanceof Variable) {
+						const defName = tokens[nameIdx].name;
+						
+						if (!seenFields.has(defName)) {
+							seenFields.add(defName);
+							
+							// Найти закрывающую скобку для полного range
+							let closeIdx = nameIdx + 1;
+							let parenDepth = 1;
+							while (closeIdx < endIdx && parenDepth > 0) {
+								if (tokens[closeIdx] instanceof ParserKeyword) {
+									if (tokens[closeIdx].value === '(') parenDepth++;
+									if (tokens[closeIdx].value === ')') parenDepth--;
+								}
+								closeIdx++;
+							}
+							
+							const fullRange = createRange(i, closeIdx - 1);
+							const selectionRange = createSelectionRange(nameIdx, fullRange);
+							
+							members.push(DocumentSymbol.create(
+								defName,
+								undefined,
+								SymbolKind.Field,
+								fullRange,
+								selectionRange
+							));
+						}
+					}
+				}
+			}
+		}
+		
+		return members;
+	};
+
+	// Основной проход
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
+
+		// class(ClassName)
+		if (token instanceof Keyword && token.value.toLowerCase() === 'class') {
+			let nextIdx = skipWhitespace(i + 1);
+			
+			if (nextIdx < tokens.length && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '(') {
+				let nameIdx = skipWhitespace(nextIdx + 1);
+				
+				if (nameIdx < tokens.length && tokens[nameIdx] instanceof Variable) {
+					const className = tokens[nameIdx].name;
+					const endIdx = findEndKeyword(i + 1, 'endclass');
+					
+					if (endIdx !== -1) {
+						const range = createRange(nameIdx, endIdx);
+						const selectionRange = createRange(nameIdx, nameIdx);
+						
+						const classSymbol = DocumentSymbol.create(
+							className,
+							undefined,
+							SymbolKind.Class,
+							range,
+							selectionRange,
+							parseClassMembers(nameIdx + 1, endIdx)
+						);
+						
+						rootSymbols.push(classSymbol);
+						i = endIdx;
+					}
+				}
+			}
+		}
+		
+		// struct(StructName)
+		else if (token instanceof Keyword && token.value.toLowerCase() === 'struct') {
+			let nextIdx = skipWhitespace(i + 1);
+			
+			if (nextIdx < tokens.length && tokens[nextIdx] instanceof ParserKeyword && tokens[nextIdx].value === '(') {
+				let nameIdx = skipWhitespace(nextIdx + 1);
+				
+				if (nameIdx < tokens.length && tokens[nameIdx] instanceof Variable) {
+					const structName = tokens[nameIdx].name;
+					const endIdx = findEndKeyword(i + 1, 'endstruct');
+					
+					if (endIdx !== -1) {
+						const range = createRange(nameIdx, endIdx);
+						const selectionRange = createRange(nameIdx, nameIdx);
+						
+						const structSymbol = DocumentSymbol.create(
+							structName,
+							undefined,
+							SymbolKind.Struct,
+							range,
+							selectionRange,
+							parseClassMembers(nameIdx + 1, endIdx)
+						);
+						
+						rootSymbols.push(structSymbol);
+						i = endIdx;
+					}
+				}
+			}
+		}
+		
+		// Variable = { ... } (функция)
+		else if (token instanceof Variable) {
+			let nextIdx = skipWhitespace(i + 1);
+			
+			if (nextIdx < tokens.length && tokens[nextIdx] instanceof Keyword && tokens[nextIdx].value === '=') {
+				let valueIdx = skipWhitespace(nextIdx + 1);
+				
+				if (valueIdx < tokens.length && tokens[valueIdx] instanceof ParserKeyword && tokens[valueIdx].value === '{') {
+					const funcName = token.name;
+					const endIdx = findClosingBrace(valueIdx);
+					
+					if (endIdx !== -1) {
+						const range = createRange(i, endIdx);
+						const selectionRange = createRange(i, i);
+						
+						const funcSymbol = DocumentSymbol.create(
+							funcName,
+							undefined,
+							SymbolKind.Function,
+							range,
+							selectionRange,
+							parseVariablesInRange(valueIdx + 1, endIdx)
+						);
+						
+						rootSymbols.push(funcSymbol);
+						i = endIdx;
+					}
+				}
+			}
+		}
+	}
+
+	return rootSymbols;
+});
+
+// Go to Definition
+connection.onDefinition((params: DefinitionParams): Location | null => {
+	if (!workspaceManager) return null;
+
+	const doc = documents.get(params.textDocument.uri);
+	if (!doc) return null;
+
+	const word = getWordAt(doc, params.position);
+	if (!word) return null;
+
+	const typeSystem = workspaceManager.getTypeSystem();
+	const typeInfo = typeSystem.findType(word);
+	
+	if (typeInfo) {
+		return {
+			uri: typeInfo.location.uri,
+			range: { start: { line: typeInfo.location.line, character: 0 }, end: { line: typeInfo.location.line, character: 0 } }
+		};
+	}
+
+	return null;
+});
+
+// Find References  
+connection.onReferences((params: ReferenceParams): Location[] => {
+	if (!workspaceManager) return [];
+
+	const doc = documents.get(params.textDocument.uri);
+	if (!doc) return [];
+
+	const word = getWordAt(doc, params.position);
+	if (!word) return [];
+
+	const locations: Location[] = [];
+	
+	// Search in all documents
+	for (const document of documents.all()) {
+		const text = document.getText();
+		const regex = new RegExp(`\\b${escapeRegex(word)}\\b`, 'gi');
+		let match;
+		
+		while ((match = regex.exec(text)) !== null) {
+			locations.push({
+				uri: document.uri,
+			range: {
+					start: document.positionAt(match.index),
+					end: document.positionAt(match.index + match[0].length)
+				}
+			});
+		}
+	}
+
+	return locations;
+});
+
+// Hover
+connection.onHover((params: TextDocumentPositionParams): Hover | null => {
+	if (!workspaceManager) return null;
+
+	const doc = documents.get(params.textDocument.uri);
+	if (!doc) return null;
+
+	const word = getWordAt(doc, params.position);
+	if (!word) return null;
+
+	const resolver = workspaceManager.getResolver();
+	const inferredType = resolver.inferVariableType(word, doc.getText());
+	
+	if (inferredType) {
+		return {
+			contents: {
+				kind: MarkupKind.Markdown,
+				value: `**Type:** \`${inferredType.typeName}\`\n\n**Confidence:** ${inferredType.confidence}`
+			}
+		};
+	}
+
+	const typeSystem = workspaceManager.getTypeSystem();
+	const typeInfo = typeSystem.findType(word);
+	
+	if (typeInfo) {
+		return {
+			contents: {
+				kind: MarkupKind.Markdown,
+				value: `**${typeInfo.kind}:** \`${typeInfo.name}\`${typeInfo.parent ? `\n\n**Extends:** ${typeInfo.parent}` : ''}`
+			}
+		};
+	}
+
+	return null;
+});
+
+// CodeLens
+connection.onCodeLens((params: CodeLensParams): CodeLens[] => {
+	if (!workspaceManager) return [];
+
+	const uri = params.textDocument.uri;
+	const normalizedUri = normalizeUri(uri);
+	const typeSystem = workspaceManager.getTypeSystem();
+	const allTypes = typeSystem.getAllTypes();
+	const lenses: CodeLens[] = [];
+
+	for (const typeInfo of allTypes) {
+		const typeUri = normalizeUri(typeInfo.location.uri);
+		if (typeUri !== normalizedUri) continue;
+
+		const refCount = countReferences(typeInfo.name);
+		
+		lenses.push({
+			range: { start: { line: typeInfo.location.line, character: 0 }, end: { line: typeInfo.location.line, character: 0 } },
+			command: {
+				title: refCount === 0 ? 'no references' : `${refCount} reference${refCount === 1 ? '' : 's'}`,
+				command: '',
+				arguments: []
+			}
+		});
+	}
+
+	return lenses;
+});
+
+// Helper functions
+function getTokenOffset(text: string, tokens: any[], tokenIndex: number): number {
+	let offset = 0;
+	
+	for (let i = 0; i < tokenIndex; i++) {
+		const token = tokens[i];
+		// Для всех токенов используем реальную длину
+		offset += token.toString().length;
+	}
+	
+	return offset;
+}
+
+function getWordAt(doc: TextDocument, position: { line: number; character: number }): string | null {
+	const text = doc.getText();
+	const offset = doc.offsetAt(position);
+	
+	let start = offset;
+	let end = offset;
+	
+	while (start > 0 && /[a-zA-Z0-9_]/.test(text[start - 1])) {
+		start--;
+	}
+	
+	while (end < text.length && /[a-zA-Z0-9_]/.test(text[end])) {
+		end++;
+	}
+	
+	if (start === end) return null;
+	
+	return text.substring(start, end);
+}
+
+function escapeRegex(str: string): string {
+	return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function countReferences(symbolName: string): number {
+	let count = 0;
+	for (const doc of documents.all()) {
+		const text = doc.getText();
+		const regex = new RegExp(`\\b${escapeRegex(symbolName)}\\b`, 'gi');
+		const matches = text.match(regex);
+		if (matches) {
+			count += matches.length;
+		}
+	}
+	return Math.max(0, count - 1); // Subtract definition
+}
+
 documents.listen(connection);
-
-// Listen on the connection
 connection.listen();
-
-console.log("Server module loaded");
