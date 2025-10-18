@@ -1,207 +1,149 @@
-// ======================================================
-// SQF Parser - ported from sqf-master/sqf/parser.py
-// ======================================================
-
-import { tokenize } from './tokenizer';
-import {
-    BaseType,
-    SQFString,
-    SQFNumber,
-    SQFBoolean,
-    Variable,
-    Keyword,
-    Namespace,
-    Preprocessor,
-    ParserKeyword,
-    Comment,
-    Space,
-    Tab,
-    EndOfLine,
-    Statement,
-    Code,
-    SQFArray
-} from './sqfTypes';
-import { isKeyword, isNamespace, isPreprocessor, PREPROCESSORS } from './keywords';
-
 /**
- * Convert raw token string to typed token
+ * SQF parser wrapper for extracting variables and functions
  */
-function identifyToken(token: string): BaseType {
-    // Whitespace
-    if (token === ' ') return new Space();
-    if (token === '\t') return new Tab();
-    if (token === '\n' || token === '\r\n') return new EndOfLine(token);
-    
-    // Parentheses and brackets
-    if (['(', ')', '[', ']', '{', '}', ',', ';'].includes(token)) {
-        return new ParserKeyword(token);
-    }
-    
-    // Booleans
-    if (token === 'true') return new SQFBoolean(true);
-    if (token === 'false') return new SQFBoolean(false);
-    
-    // Numbers
-    const numValue = Number(token);
-    if (!isNaN(numValue) && token.trim() !== '') {
-        return new SQFNumber(numValue);
-    }
-    
-    // Preprocessors
-    if (isPreprocessor(token)) {
-        return new Preprocessor(token);
-    }
-    
-    // Namespaces
-    if (isNamespace(token)) {
-        return new Namespace(token);
-    }
-    
-    // Keywords
-    if (isKeyword(token)) {
-        return new Keyword(token);
-    }
-    
-    // Variables
-    return new Variable(token);
-}
 
-/**
- * Parse strings and comments from tokens
- * Ported from parse_strings_and_comments() in parser.py
- */
-export function parseStringsAndComments(allTokens: string[]): BaseType[] {
-    const tokens: BaseType[] = [];
-    let mode: 'string_double' | 'string_single' | 'comment_line' | 'comment_bulk' | null = null;
-    let buffer = '';
-    let inDouble = false;
+import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
+import { CustomSQFLexer } from './customSQFLexer';
+import { SQFParser, AssignmentContext, BinaryExpressionContext, NularExpressionContext } from './generated/SQFParser';
+import { SQFVisitor } from './generated/SQFVisitor';
+import { SymbolInfo, SymbolType, isLocalVariable } from '../types/symbols';
+import { AbstractParseTreeVisitor } from 'antlr4ng';
 
-    for (let i = 0; i < allTokens.length; i++) {
-        const token = allTokens[i];
+export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements SQFVisitor<void> {
+    private symbols: SymbolInfo[] = [];
+    private currentFunction: SymbolInfo | null = null;
 
-        if (mode === 'string_double') {
-            buffer += token;
-            if (token === '"') {
-                if (inDouble) {
-                    inDouble = false;
-                } else if (i < allTokens.length - 1 && allTokens[i + 1] === '"') {
-                    inDouble = true;
-                } else {
-                    tokens.push(new SQFString(buffer));
-                    mode = null;
-                    buffer = '';
-                    inDouble = false;
+    getSymbols(): SymbolInfo[] {
+        return this.symbols;
+    }
+
+    visitAssignment(ctx: AssignmentContext): void {
+        // Extract variable name from ID or macro
+        const idToken = ctx.ID();
+        const macroToken = ctx.macro(0);
+        
+        let varName: string | undefined;
+        let startToken: any;
+        
+        if (idToken) {
+            varName = idToken.symbol.text;
+            startToken = idToken.symbol;
+        } else if (macroToken) {
+            // For now, skip macros in assignments
+            this.visitChildren(ctx);
+            return;
+        }
+        
+        if (!varName) {
+            this.visitChildren(ctx);
+            return;
+        }
+
+        // Check if it's a function assignment (right side is InlineCode)
+        const rightSide = ctx.binaryExpression() || ctx.macro(1);
+        let isFunction = false;
+        
+        if (rightSide && rightSide instanceof ParserRuleContext) {
+            // Check if the right side contains inline code (curly braces)
+            isFunction = this.containsInlineCode(rightSide);
+        }
+
+        const isPrivate = ctx.PRIVATE() !== null;
+        const symbolType = isFunction ? SymbolType.Function : 
+                          (isPrivate || isLocalVariable(varName)) ? SymbolType.LocalVariable : 
+                          SymbolType.GlobalVariable;
+
+        const symbol: SymbolInfo = {
+            name: varName,
+            type: symbolType,
+            range: {
+                start: {
+                    line: (ctx.start?.line || 1) - 1,
+                    character: ctx.start?.column || 0
+                },
+                end: {
+                    line: (ctx.stop?.line || 1) - 1,
+                    character: (ctx.stop?.column || 0) + (ctx.stop?.text?.length || 0)
                 }
-            }
-        } else if (mode === 'string_single') {
-            buffer += token;
-            if (token === "'") {
-                if (inDouble) {
-                    inDouble = false;
-                } else if (i < allTokens.length - 1 && allTokens[i + 1] === "'") {
-                    inDouble = true;
-                } else {
-                    tokens.push(new SQFString(buffer));
-                    mode = null;
-                    buffer = '';
-                    inDouble = false;
+            },
+            selectionRange: {
+                start: {
+                    line: (startToken?.line || 1) - 1,
+                    character: startToken?.column || 0
+                },
+                end: {
+                    line: (startToken?.line || 1) - 1,
+                    character: (startToken?.column || 0) + varName.length
                 }
-            }
-        } else if (mode === 'comment_bulk') {
-            buffer += token;
-            if (token === '*/') {
-                tokens.push(new Comment(buffer));
-                mode = null;
-                buffer = '';
-            }
-        } else if (mode === 'comment_line') {
-            buffer += token;
-            if (token === '\n' || token === '\r\n') {
-                tokens.push(new Comment(buffer));
-                mode = null;
-                buffer = '';
-            }
+            },
+            detail: isPrivate ? 'private' : 'global',
+            children: []
+        };
+
+        // If it's a function, set it as current and visit children
+        if (isFunction) {
+            this.symbols.push(symbol);
+            const previousFunction = this.currentFunction;
+            this.currentFunction = symbol;
+            this.visitChildren(ctx);
+            this.currentFunction = previousFunction;
         } else {
-            // mode is null
-            if (token === '"') {
-                buffer = token;
-                mode = 'string_double';
-            } else if (token === "'") {
-                buffer = token;
-                mode = 'string_single';
-            } else if (token === '/*') {
-                buffer = token;
-                mode = 'comment_bulk';
-            } else if (token === '//') {
-                buffer = token;
-                mode = 'comment_line';
+            // If we're inside a function, add as child, otherwise add to root
+            if (this.currentFunction) {
+                this.currentFunction.children!.push(symbol);
             } else {
-                tokens.push(identifyToken(token));
+                this.symbols.push(symbol);
             }
+            this.visitChildren(ctx);
         }
     }
 
-    // Handle unclosed strings/comments
-    if (mode === 'comment_line' || mode === 'comment_bulk') {
-        tokens.push(new Comment(buffer));
-    } else if (mode !== null) {
-        // String not closed - add as is
-        tokens.push(new SQFString(buffer));
+    private containsInlineCode(ctx: ParserRuleContext): boolean {
+        // Check if context or any child contains InlineCode (C_B_O ... C_B_C)
+        const text = ctx.getText();
+        // Simple heuristic: if it starts with '{' and ends with '}', it's likely inline code
+        return text.startsWith('{') && text.endsWith('}');
     }
 
-    return tokens;
+    defaultResult(): void {
+        return;
+    }
+
+    protected aggregateResult(aggregate: void, nextResult: void): void {
+        return;
+    }
 }
 
-/**
- * Main parse function
- */
-export function parse(text: string): Statement {
-    // Step 1: Tokenize
-    const rawTokens = tokenize(text);
-    
-    // Step 2: Parse strings and comments
-    const tokens = parseStringsAndComments(rawTokens);
-    
-    // Step 3: Group into statement
-    return new Statement(tokens);
-}
+export class SQFParserWrapper {
+    private macroNames: string[] = [];
 
-/**
- * Find matching closing parenthesis/bracket/brace
- */
-export function findMatchingClose(
-    tokens: BaseType[],
-    startIndex: number,
-    openChar: string,
-    closeChar: string
-): number {
-    let depth = 1;
-    
-    for (let i = startIndex + 1; i < tokens.length; i++) {
-        const token = tokens[i];
-        if (token instanceof ParserKeyword) {
-            if (token.value === openChar) {
-                depth++;
-            } else if (token.value === closeChar) {
-                depth--;
-                if (depth === 0) {
-                    return i;
-                }
-            }
+    /**
+     * Add macro names that should be recognized by the lexer
+     */
+    addMacroNames(names: string[]): void {
+        this.macroNames.push(...names);
+    }
+
+    parse(text: string, additionalMacros: string[] = []): SymbolInfo[] {
+        try {
+            const inputStream = CharStream.fromString(text);
+            const allMacros = [...this.macroNames, ...additionalMacros];
+            const lexer = new CustomSQFLexer(inputStream, allMacros);
+            const tokenStream = new CommonTokenStream(lexer);
+            const parser = new SQFParser(tokenStream);
+            
+            // Don't remove error listeners - just silence them with noop
+            // parser.removeErrorListeners();
+            
+            const tree = parser.start();
+            const visitor = new SQFSymbolVisitor();
+            visitor.visit(tree);
+            
+            return visitor.getSymbols();
+        } catch (error) {
+            console.error('SQF parsing error:', error);
+            return [];
         }
     }
-    
-    return -1; // Not found
-}
-
-/**
- * Extract tokens between parentheses
- */
-export function extractBetween(
-    tokens: BaseType[],
-    startIndex: number,
-    endIndex: number
-): BaseType[] {
-    return tokens.slice(startIndex + 1, endIndex);
 }
 

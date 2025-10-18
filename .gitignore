@@ -4,3 +4,8 @@ node_modules
 .vscode-test/
 *.vsix
 example_project
+
+# ANTLR generated files
+*.interp
+*.tokens
+src/parser/generated/

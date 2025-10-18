@@ -6,7 +6,7 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
-			"name": "Start Client",
+			"name": "Launch Extension",
 			"type": "extensionHost",
 			"request": "launch",
 			"args": [
@@ -18,33 +18,21 @@
 			"preLaunchTask": "${defaultBuildTask}"
 		},
 		{
+			"name": "Attach to Language Server",
 			"type": "node",
 			"request": "attach",
-			"name": "Attach to Server",
-			"port": 12221,
+			"port": 6009,
 			"restart": true,
-			"outFiles": ["${workspaceRoot}/server/out/**/*.js"],
-		},
-		{
-			"name": "Extension Tests",
-			"type": "extensionHost",
-			"request": "launch",
-			"args": [
-				"--extensionDevelopmentPath=${workspaceFolder}",
-				"--extensionTestsPath=${workspaceFolder}/out/test/suite/index"
-			],
 			"outFiles": [
-				"${workspaceFolder}/out/test/**/*.js"
-			],
-			"preLaunchTask": "${defaultBuildTask}"
+				"${workspaceFolder}/out/server/**/*.js"
+			]
 		}
 	],
 	"compounds": [
 		{
-			"name": "Client + Server",
-			"configurations": ["Start Client","Attach to Server"],
+			"name": "Extension + Server",
+			"configurations": ["Launch Extension", "Attach to Language Server"],
 			"stopAll": true
 		}
 	]
-	
 }
