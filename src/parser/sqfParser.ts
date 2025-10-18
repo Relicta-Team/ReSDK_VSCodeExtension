@@ -11,7 +11,6 @@ import { AbstractParseTreeVisitor } from 'antlr4ng';
 
 export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements SQFVisitor<void> {
     private symbols: SymbolInfo[] = [];
-    private currentFunction: SymbolInfo | null = null;
 
     getSymbols(): SymbolInfo[] {
         return this.symbols;
@@ -49,9 +48,17 @@ export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements 
         }
 
         const isPrivate = ctx.PRIVATE() !== null;
-        const symbolType = isFunction ? SymbolType.Function : 
-                          (isPrivate || isLocalVariable(varName)) ? SymbolType.LocalVariable : 
-                          SymbolType.GlobalVariable;
+        
+        // Determine symbol type
+        let symbolType: SymbolType;
+        if (isFunction) {
+            symbolType = SymbolType.Function;
+        } else if (isPrivate || isLocalVariable(varName)) {
+            // Variables with 'private' keyword or starting with '_' are local
+            symbolType = SymbolType.LocalVariable;
+        } else {
+            symbolType = SymbolType.GlobalVariable;
+        }
 
         const symbol: SymbolInfo = {
             name: varName,
@@ -80,22 +87,9 @@ export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements 
             children: []
         };
 
-        // If it's a function, set it as current and visit children
-        if (isFunction) {
-            this.symbols.push(symbol);
-            const previousFunction = this.currentFunction;
-            this.currentFunction = symbol;
-            this.visitChildren(ctx);
-            this.currentFunction = previousFunction;
-        } else {
-            // If we're inside a function, add as child, otherwise add to root
-            if (this.currentFunction) {
-                this.currentFunction.children!.push(symbol);
-            } else {
-                this.symbols.push(symbol);
-            }
-            this.visitChildren(ctx);
-        }
+        // Add all symbols to flat list - hierarchy will be built later
+        this.symbols.push(symbol);
+        this.visitChildren(ctx);
     }
 
     private containsInlineCode(ctx: ParserRuleContext): boolean {
