@@ -32,9 +32,18 @@ export class DocumentSymbolProvider {
      * Convert internal SymbolInfo to LSP DocumentSymbol
      */
     private convertToDocumentSymbol(symbol: SymbolInfo): DocumentSymbol {
+        // Format detail with parameters for functions
+        let detail = symbol.detail || '';
+        if ((symbol.type === SymbolType.Function || symbol.type === SymbolType.MacroFunction) && symbol.parameters) {
+            const formatted = symbol.parameters.map(p => p.isOptional ? `${p.name}?` : p.name);
+            detail = `(${formatted.join(', ')})`;
+        } else if ((symbol.type === SymbolType.Function || symbol.type === SymbolType.MacroFunction) && !symbol.parameters) {
+            detail = '(_this)';
+        }
+
         return DocumentSymbol.create(
             symbol.name,
-            symbol.detail || '',
+            detail,
             this.getSymbolKind(symbol.type),
             Range.create(
                 symbol.range.start.line,

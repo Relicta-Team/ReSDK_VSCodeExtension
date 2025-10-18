@@ -10,12 +10,14 @@ import {
     InitializeResult,
     TextDocumentSyncKind,
     DocumentSymbolParams,
-    TextDocumentChangeEvent
+    TextDocumentChangeEvent,
+    HoverParams
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DocumentSymbolProvider } from '../providers/documentSymbolProvider';
 import { DiagnosticsProvider } from '../providers/diagnosticsProvider';
+import { HoverProvider } from '../providers/hoverProvider';
 
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
@@ -26,13 +28,15 @@ const documents = new TextDocuments(TextDocument);
 // Create providers
 const documentSymbolProvider = new DocumentSymbolProvider();
 const diagnosticsProvider = new DiagnosticsProvider();
+const hoverProvider = new HoverProvider();
 
 // Initialize server
 connection.onInitialize((params: InitializeParams): InitializeResult => {
     return {
         capabilities: {
             textDocumentSync: TextDocumentSyncKind.Incremental,
-            documentSymbolProvider: true
+            documentSymbolProvider: true,
+            hoverProvider: true
         }
     };
 });
@@ -49,6 +53,21 @@ connection.onDocumentSymbol((params: DocumentSymbolParams) => {
     } catch (error) {
         console.error('Error providing document symbols:', error);
         return [];
+    }
+});
+
+// Handle hover requests
+connection.onHover((params: HoverParams) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return null;
+    }
+
+    try {
+        return hoverProvider.provideHover(document, params.position);
+    } catch (error) {
+        console.error('Error providing hover:', error);
+        return null;
     }
 });
 

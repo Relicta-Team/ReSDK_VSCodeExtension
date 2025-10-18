@@ -11,6 +11,11 @@ export enum SymbolType {
     GlobalVariable = 'globalVariable'
 }
 
+export interface ParameterInfo {
+    name: string;
+    isOptional: boolean;
+}
+
 export interface SymbolInfo {
     name: string;
     type: SymbolType;
@@ -24,6 +29,7 @@ export interface SymbolInfo {
     };
     detail?: string;
     children?: SymbolInfo[];
+    parameters?: ParameterInfo[];  // Function parameters extracted from params [...]
 }
 
 export interface Position {

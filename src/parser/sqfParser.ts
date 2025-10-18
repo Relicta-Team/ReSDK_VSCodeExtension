@@ -6,8 +6,9 @@ import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
 import { CustomSQFLexer } from './customSQFLexer';
 import { SQFParser, AssignmentContext, BinaryExpressionContext, NularExpressionContext, InlineCodeContext } from './generated/SQFParser';
 import { SQFVisitor } from './generated/SQFVisitor';
-import { SymbolInfo, SymbolType, isLocalVariable } from '../types/symbols';
+import { SymbolInfo, SymbolType, isLocalVariable, ParameterInfo } from '../types/symbols';
 import { AbstractParseTreeVisitor } from 'antlr4ng';
+import { extractParameters } from './parameterExtractor';
 
 export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements SQFVisitor<void> {
     private symbols: SymbolInfo[] = [];
@@ -89,6 +90,13 @@ export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements 
             return;
         }
 
+        // Extract parameters if this is a function
+        let parameters: ParameterInfo[] | undefined;
+        if (isFunction && rightSide) {
+            const functionBody = rightSide.getText();
+            parameters = extractParameters(functionBody);
+        }
+
         const symbol: SymbolInfo = {
             name: varName,
             type: symbolType,
@@ -114,7 +122,8 @@ export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements 
             },
             detail: isPrivate ? 'private' : 
                     (symbolType === SymbolType.LocalVariable || isLocalVariable(varName) ? 'local' : 'global'),
-            children: []
+            children: [],
+            parameters: parameters
         };
 
         // Add symbol to flat list - hierarchy will be built later
