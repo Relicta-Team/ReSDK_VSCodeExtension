@@ -34,9 +34,9 @@ start  :
 			UNDEFINE ID
 		;
 		
-		prepIf:
-			(IF | IFN) ID (NL+ preprocessorStatement)*? NL+ (ELSE (NL+ preprocessorStatement)*)? NL* ENDIF
-		;
+	prepIf:
+		(IF | IFN) ID (NL+ preprocessorStatement)*? NL+ (ELSE (NL+ preprocessorStatement)*)? NL* ENDIF
+	;
 		
 		error:
 			PREP_PREFIX instruction=(ID | STRING) (~(NL | EOF))*

@@ -4,16 +4,29 @@
 
 import { CharStream, CommonTokenStream, ParserRuleContext } from 'antlr4ng';
 import { CustomSQFLexer } from './customSQFLexer';
-import { SQFParser, AssignmentContext, BinaryExpressionContext, NularExpressionContext } from './generated/SQFParser';
+import { SQFParser, AssignmentContext, BinaryExpressionContext, NularExpressionContext, InlineCodeContext } from './generated/SQFParser';
 import { SQFVisitor } from './generated/SQFVisitor';
 import { SymbolInfo, SymbolType, isLocalVariable } from '../types/symbols';
 import { AbstractParseTreeVisitor } from 'antlr4ng';
 
 export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements SQFVisitor<void> {
     private symbols: SymbolInfo[] = [];
+    private scopeStack: Set<string>[] = [new Set()]; // Stack of scopes
 
     getSymbols(): SymbolInfo[] {
         return this.symbols;
+    }
+
+    private getCurrentScope(): Set<string> {
+        return this.scopeStack[this.scopeStack.length - 1];
+    }
+
+    private pushScope(): void {
+        this.scopeStack.push(new Set());
+    }
+
+    private popScope(): void {
+        this.scopeStack.pop();
     }
 
     visitAssignment(ctx: AssignmentContext): void {
@@ -60,6 +73,22 @@ export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements 
             symbolType = SymbolType.GlobalVariable;
         }
 
+        const currentScope = this.getCurrentScope();
+        
+        // For non-function variables: skip reassignments
+        if (!isFunction && currentScope.has(varName)) {
+            this.visitChildren(ctx);
+            return;
+        }
+
+        // Skip local variables WITHOUT 'private' keyword from outline
+        // Show: global variables, all functions, macros, and private variables
+        if (symbolType === SymbolType.LocalVariable && !isPrivate) {
+            currentScope.add(varName);
+            this.visitChildren(ctx);
+            return;
+        }
+
         const symbol: SymbolInfo = {
             name: varName,
             type: symbolType,
@@ -83,13 +112,29 @@ export class SQFSymbolVisitor extends AbstractParseTreeVisitor<void> implements 
                     character: (startToken?.column || 0) + varName.length
                 }
             },
-            detail: isPrivate ? 'private' : 'global',
+            detail: isPrivate ? 'private' : 
+                    (symbolType === SymbolType.LocalVariable || isLocalVariable(varName) ? 'local' : 'global'),
             children: []
         };
 
-        // Add all symbols to flat list - hierarchy will be built later
+        // Add symbol to flat list - hierarchy will be built later
         this.symbols.push(symbol);
+        
+        // Track definition in current scope
+        currentScope.add(varName);
+        
+        // Visit children - scope will be created by visitInlineCode if needed
         this.visitChildren(ctx);
+    }
+
+    /**
+     * Visit inline code blocks - create new scope for each
+     */
+    visitInlineCode(ctx: InlineCodeContext): void {
+        // Create new scope for this code block
+        this.pushScope();
+        this.visitChildren(ctx);
+        this.popScope();
     }
 
     private containsInlineCode(ctx: ParserRuleContext): boolean {

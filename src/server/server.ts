@@ -10,10 +10,12 @@ import {
     InitializeResult,
     TextDocumentSyncKind,
     DocumentSymbolParams,
+    TextDocumentChangeEvent
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DocumentSymbolProvider } from '../providers/documentSymbolProvider';
+import { DiagnosticsProvider } from '../providers/diagnosticsProvider';
 
 // Create a connection for the server
 const connection = createConnection(ProposedFeatures.all);
@@ -21,8 +23,9 @@ const connection = createConnection(ProposedFeatures.all);
 // Create a document manager
 const documents = new TextDocuments(TextDocument);
 
-// Create document symbol provider
+// Create providers
 const documentSymbolProvider = new DocumentSymbolProvider();
+const diagnosticsProvider = new DiagnosticsProvider();
 
 // Initialize server
 connection.onInitialize((params: InitializeParams): InitializeResult => {
@@ -47,6 +50,30 @@ connection.onDocumentSymbol((params: DocumentSymbolParams) => {
         console.error('Error providing document symbols:', error);
         return [];
     }
+});
+
+// Validate document and send diagnostics
+async function validateDocument(document: TextDocument): Promise<void> {
+    try {
+        const diagnostics = diagnosticsProvider.provideDiagnostics(document);
+        connection.sendDiagnostics({ uri: document.uri, diagnostics });
+    } catch (error) {
+        console.error('Error validating document:', error);
+    }
+}
+
+// Validate on document open/change
+documents.onDidOpen((event: TextDocumentChangeEvent<TextDocument>) => {
+    validateDocument(event.document);
+});
+
+documents.onDidChangeContent((event: TextDocumentChangeEvent<TextDocument>) => {
+    validateDocument(event.document);
+});
+
+// Clear diagnostics on document close
+documents.onDidClose((event) => {
+    connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 });
 
 // Listen on the connection

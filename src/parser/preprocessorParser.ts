@@ -22,9 +22,14 @@ export class PreprocessorSymbolVisitor extends AbstractParseTreeVisitor<SymbolIn
             const startToken = ctx._name;
             const stopToken = ctx.stop || ctx._name;
             
+            // Check if this is a macro function (has parameters)
+            const hasMacroArgs = ctx.macroArgs() !== null;
+            const symbolType = hasMacroArgs ? SymbolType.MacroFunction : SymbolType.Macro;
+            const detail = hasMacroArgs ? 'macro function' : 'macro';
+            
             this.symbols.push({
                 name: name,
-                type: SymbolType.Macro,
+                type: symbolType,
                 range: {
                     start: {
                         line: (startToken?.line || 1) - 1,
@@ -45,7 +50,8 @@ export class PreprocessorSymbolVisitor extends AbstractParseTreeVisitor<SymbolIn
                         character: (startToken?.column || 0) + name.length
                     }
                 },
-                detail: 'macro'
+                detail: detail,
+                children: []
             });
         }
         return this.visitChildren(ctx) || this.symbols;

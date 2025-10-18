@@ -6,7 +6,7 @@ import {
     DocumentSymbol, 
     SymbolKind, 
     Range, 
-    TextDocument 
+    TextDocument
 } from 'vscode-languageserver/node';
 import { DocumentParser } from '../parser/documentParser';
 import { SymbolInfo, SymbolType } from '../types/symbols';
@@ -58,6 +58,8 @@ export class DocumentSymbolProvider {
     private getSymbolKind(type: SymbolType): SymbolKind {
         switch (type) {
             case SymbolType.Function:
+                return SymbolKind.Function;
+            case SymbolType.MacroFunction:
                 return SymbolKind.Function;
             case SymbolType.Macro:
                 return SymbolKind.Constant;

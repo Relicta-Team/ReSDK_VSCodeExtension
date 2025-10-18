@@ -6,6 +6,7 @@ export enum SymbolType {
     Variable = 'variable',
     Function = 'function',
     Macro = 'macro',
+    MacroFunction = 'macroFunction',
     LocalVariable = 'localVariable',
     GlobalVariable = 'globalVariable'
 }

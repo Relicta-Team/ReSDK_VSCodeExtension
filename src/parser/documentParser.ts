@@ -74,7 +74,11 @@ export class DocumentParser {
             let parent: SymbolInfo | null = null;
             
             for (const potentialParent of sorted) {
-                if (potentialParent.type === SymbolType.Function && 
+                // Functions and MacroFunctions can contain other symbols
+                const isContainer = potentialParent.type === SymbolType.Function || 
+                                   potentialParent.type === SymbolType.MacroFunction;
+                
+                if (isContainer && 
                     potentialParent !== symbol &&
                     this.isInside(symbol, potentialParent)) {
                     // Find the most specific (innermost) parent
