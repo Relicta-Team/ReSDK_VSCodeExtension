@@ -11,15 +11,18 @@
     "url": "https://github.com/Relicta-Team/ReSDK_A3.vr.git"
   },
   "publisher": "Yodes",
-  "version": "0.4.0",
+  "version": "1.0.1",
   "engines": {
-    "vscode": "^1.78.0"
+    "vscode": "^1.86.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "workspaceContains:ReSDK"
+    "workspaceContains:ReSDK",
+    "onLanguage:sqf",
+    "onCommand:evaluatorSqf.restartLanguageServer",
+    "onCommand:evaluatorSqf.showResolvedContexts"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -27,6 +30,14 @@
       {
         "command": "resdk-vscode.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "evaluatorSqf.restartLanguageServer",
+        "title": "ReSDK Evaluator: Restart Language Server"
+      },
+      {
+        "command": "evaluatorSqf.showResolvedContexts",
+        "title": "ReSDK Evaluator: Show Resolved Contexts"
       }
     ],
     "grammars": [
@@ -52,7 +63,8 @@
         ],
         "extensions": [
           ".sqf",
-          ".interface"
+          ".interface",
+          ".inc"
         ],
         "configuration": "./configs/sqf.configuration.json"
       },
@@ -72,10 +84,10 @@
       "title": "ReSDK",
       "properties": {
         "resdk.projectpath": {
-          "type": "string",
-          "description": "Путь проекта",
           "scope": "resource",
-          "markdownDescription": "md desc"
+          "markdownDescription": "Path to the ReSDK project.",
+          "description": "Project path",
+          "type": "string"
         },
         "ReSDKLangServer.maxNumberOfProblems": {
           "scope": "resource",
@@ -93,6 +105,58 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
+        },
+        "evaluatorSqf.evaluatorPath": {
+          "markdownDescription": "Path to evaluator.exe. Leave empty to use the bundled evaluator binary.",
+          "default": "",
+          "type": "string"
+        },
+        "evaluatorSqf.rootPath": {
+          "markdownDescription": "Optional script root passed to evaluator.exe --root. Defaults to the current workspace folder.",
+          "default": "",
+          "type": "string"
+        },
+        "evaluatorSqf.extensionsRoot": {
+          "markdownDescription": "Optional extensions root passed to evaluator.exe --extensions-root.",
+          "default": "",
+          "type": "string"
+        },
+        "evaluatorSqf.serverMode": {
+          "markdownDescription": "Enable --server when running diagnostics.",
+          "default": false,
+          "type": "boolean"
+        },
+        "evaluatorSqf.maxSteps": {
+          "markdownDescription": "Maximum evaluator steps used during diagnostics.",
+          "default": 1000000,
+          "type": "number",
+          "minimum": 1
+        },
+        "evaluatorSqf.diagnosticsTimeoutMs": {
+          "markdownDescription": "Maximum time in milliseconds for evaluator-backed diagnostics before the process is stopped.",
+          "default": 30000,
+          "type": "number",
+          "minimum": 1000
+        },
+        "evaluatorSqf.validateOnSave": {
+          "markdownDescription": "Run diagnostics for saved .sqf files after save.",
+          "default": true,
+          "type": "boolean"
+        },
+        "evaluatorSqf.validateOnOpen": {
+          "markdownDescription": "Run diagnostics when a .sqf file is opened. This uses the on-disk file contents.",
+          "default": false,
+          "type": "boolean"
+        },
+        "evaluatorSqf.traceServer": {
+          "markdownDescription": "Trace level for the evaluator language client/server channel.",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "type": "string"
         }
       }
     },
@@ -116,29 +180,34 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile && npm version minor",
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "package": "npm run compile",
+    "verify:evaluator": "npm run compile",
+    "build:major": "powershell -ExecutionPolicy Bypass -File ../evaluator/tools/build-resdk-extension.ps1 -VersionBump major -SkipNpmInstall",
+    "build:minor": "powershell -ExecutionPolicy Bypass -File ../evaluator/tools/build-resdk-extension.ps1 -VersionBump minor -SkipNpmInstall",
+    "build:patch": "powershell -ExecutionPolicy Bypass -File ../evaluator/tools/build-resdk-extension.ps1 -VersionBump patch -SkipNpmInstall"
   },
   "devDependencies": {
     "@types/glob": "^8.1.0",
     "@types/mocha": "^10.0.1",
-    "@types/node": "16.x",
-    "@types/vscode": "^1.78.0",
+    "@types/node": "^20.17.30",
+    "@types/vscode": "^1.86.0",
     "@typescript-eslint/eslint-plugin": "^5.59.1",
     "@typescript-eslint/parser": "^5.59.1",
     "@vscode/test-electron": "^2.3.0",
     "eslint": "^8.39.0",
     "glob": "^8.1.0",
     "mocha": "^10.2.0",
-    "typescript": "^5.0.4"
+    "typescript": "^5.8.3"
   },
   "dependencies": {
-    "vscode-languageclient": "^8.1.0",
-    "vscode-languageserver": "^8.1.0",
-    "vscode-languageserver-textdocument": "^1.0.8"
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
   }
 }
